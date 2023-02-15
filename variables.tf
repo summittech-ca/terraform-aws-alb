@@ -35,9 +35,15 @@ variable "enable_cross_zone_load_balancing" {
 }
 
 variable "extra_ssl_certs" {
-  description = "A list of maps describing any extra SSL certificates to apply to the HTTPS listeners. Required key/values: certificate_arn, https_listener_index (the index of the listener within https_listeners which the cert applies toward)."
+  description = "A list of maps describing any extra SSL certificates to apply to the HTTPS listeners. Required key/values: certificate_arn, https_listener_index (the key/index of the listener within https_listeners which the cert applies toward)."
   type        = list(map(string))
   default     = []
+}
+
+variable "extra_ssl_certs_map" {
+  description = "A map of maps describing any extra SSL certificates to apply to the HTTPS listeners. Required key/values: certificate_arn, https_listener_index (the key/index of the listener within https_listeners which the cert applies toward)."
+  type        = map(map(string))
+  default     = {}
 }
 
 variable "https_listeners" {
@@ -46,10 +52,22 @@ variable "https_listeners" {
   default     = []
 }
 
+variable "https_listeners_map" {
+  description = "A map of maps describing the HTTPS listeners for this ALB. Required key/values: port, certificate_arn. Optional key/values: ssl_policy (defaults to ELBSecurityPolicy-2016-08), target_group_index (defaults to same key)"
+  type        = map(any)
+  default     = {}
+}
+
 variable "http_tcp_listeners" {
   description = "A list of maps describing the HTTP listeners or TCP ports for this ALB. Required key/values: port, protocol. Optional key/values: target_group_index (defaults to http_tcp_listeners[count.index])"
   type        = any
   default     = []
+}
+
+variable "http_tcp_listeners_map" {
+  description = "A map of maps describing the HTTP listeners or TCP ports for this ALB. Required key/values: port, protocol. Optional key/values: target_group_index (defaults to same key)"
+  type        = any
+  default     = {}
 }
 
 variable "https_listener_rules" {
@@ -194,6 +212,12 @@ variable "target_groups" {
   description = "A list of maps containing key/value pairs that define the target groups to be created. Order of these maps is important and the index of these are to be referenced in listener definitions. Required key/values: name, backend_protocol, backend_port"
   type        = any
   default     = []
+}
+
+variable "target_groups_map" {
+  description = "A map of objects containing key/value pairs that define the target groups to be created.  Required key/values: name, backend_protocol, backend_port"
+  type        = map(any)
+  default     = {}
 }
 
 variable "vpc_id" {

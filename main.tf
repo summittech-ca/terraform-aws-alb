@@ -59,29 +59,36 @@ resource "aws_lb" "this" {
   }
 }
 
-resource "aws_lb_target_group" "main" {
-  count = local.create_lb ? length(var.target_groups) : 0
+locals {
+  target_groups = merge({
+    for index, group in var.target_groups:
+      index => group
+  }, var.target_groups_map)
+}
 
-  name        = lookup(var.target_groups[count.index], "name", null)
-  name_prefix = lookup(var.target_groups[count.index], "name_prefix", null)
+resource "aws_lb_target_group" "main" {
+  for_each = local.target_groups
+
+  name        = lookup(local.target_groups[each.key], "name", null)
+  name_prefix = lookup(local.target_groups[each.key], "name_prefix", null)
 
   vpc_id           = var.vpc_id
-  port             = try(var.target_groups[count.index].backend_port, null)
-  protocol         = try(upper(var.target_groups[count.index].backend_protocol), null)
-  protocol_version = try(upper(var.target_groups[count.index].protocol_version), null)
-  target_type      = try(var.target_groups[count.index].target_type, null)
+  port             = try(local.target_groups[each.key].backend_port, null)
+  protocol         = try(upper(local.target_groups[each.key].backend_protocol), null)
+  protocol_version = try(upper(local.target_groups[each.key].protocol_version), null)
+  target_type      = try(local.target_groups[each.key].target_type, null)
 
-  connection_termination             = try(var.target_groups[count.index].connection_termination, null)
-  deregistration_delay               = try(var.target_groups[count.index].deregistration_delay, null)
-  slow_start                         = try(var.target_groups[count.index].slow_start, null)
-  proxy_protocol_v2                  = try(var.target_groups[count.index].proxy_protocol_v2, false)
-  lambda_multi_value_headers_enabled = try(var.target_groups[count.index].lambda_multi_value_headers_enabled, false)
-  load_balancing_algorithm_type      = try(var.target_groups[count.index].load_balancing_algorithm_type, null)
-  preserve_client_ip                 = try(var.target_groups[count.index].preserve_client_ip, null)
-  ip_address_type                    = try(var.target_groups[count.index].ip_address_type, null)
+  connection_termination             = try(local.target_groups[each.key].connection_termination, null)
+  deregistration_delay               = try(local.target_groups[each.key].deregistration_delay, null)
+  slow_start                         = try(local.target_groups[each.key].slow_start, null)
+  proxy_protocol_v2                  = try(local.target_groups[each.key].proxy_protocol_v2, false)
+  lambda_multi_value_headers_enabled = try(local.target_groups[each.key].lambda_multi_value_headers_enabled, false)
+  load_balancing_algorithm_type      = try(local.target_groups[each.key].load_balancing_algorithm_type, null)
+  preserve_client_ip                 = try(local.target_groups[each.key].preserve_client_ip, null)
+  ip_address_type                    = try(local.target_groups[each.key].ip_address_type, null)
 
   dynamic "health_check" {
-    for_each = try([var.target_groups[count.index].health_check], [])
+    for_each = try([local.target_groups[each.key].health_check], [])
 
     content {
       enabled             = try(health_check.value.enabled, null)
@@ -97,7 +104,7 @@ resource "aws_lb_target_group" "main" {
   }
 
   dynamic "stickiness" {
-    for_each = try([var.target_groups[count.index].stickiness], [])
+    for_each = try([local.target_groups[each.key].stickiness], [])
 
     content {
       enabled         = try(stickiness.value.enabled, null)
@@ -110,9 +117,9 @@ resource "aws_lb_target_group" "main" {
   tags = merge(
     var.tags,
     var.target_group_tags,
-    lookup(var.target_groups[count.index], "tags", {}),
+    lookup(local.target_groups[each.key], "tags", {}),
     {
-      "Name" = try(var.target_groups[count.index].name, var.target_groups[count.index].name_prefix, "")
+      "Name" = try(local.target_groups[each.key].name, local.target_groups[each.key].name_prefix, "")
     },
   )
 
@@ -129,7 +136,7 @@ locals {
   # can be added later and only need to be updated in the attachment resource below.
   # https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lb_target_group_attachment#argument-reference
   target_group_attachments = merge(flatten([
-    for index, group in var.target_groups : [
+    for index, group in local.target_groups : [
       for k, targets in group : {
         for target_key, target in targets : join(".", [index, target_key]) => merge({ tg_index = index }, target)
       }
@@ -615,21 +622,28 @@ resource "aws_lb_listener_rule" "http_tcp_listener_rule" {
   )
 }
 
+locals {
+  http_tcp_listeners = merge({
+    for index, listener in var.http_tcp_listeners:
+      index => listener
+  }, var.http_tcp_listeners_map)
+}
+
 resource "aws_lb_listener" "frontend_http_tcp" {
-  count = local.create_lb ? length(var.http_tcp_listeners) : 0
+  for_each = local.create_lb ? local.http_tcp_listeners : {}
 
   load_balancer_arn = aws_lb.this[0].arn
 
-  port     = var.http_tcp_listeners[count.index]["port"]
-  protocol = var.http_tcp_listeners[count.index]["protocol"]
+  port     = each.value["port"]
+  protocol = each.value["protocol"]
 
   dynamic "default_action" {
-    for_each = length(keys(var.http_tcp_listeners[count.index])) == 0 ? [] : [var.http_tcp_listeners[count.index]]
+    for_each = length(keys(each.value)) == 0 ? [] : [each.value]
 
     # Defaults to forward action if action_type not specified
     content {
       type             = lookup(default_action.value, "action_type", "forward")
-      target_group_arn = contains([null, "", "forward"], lookup(default_action.value, "action_type", "")) ? aws_lb_target_group.main[lookup(default_action.value, "target_group_index", count.index)].id : null
+      target_group_arn = contains([null, "", "forward"], lookup(default_action.value, "action_type", "")) ? aws_lb_target_group.main[lookup(default_action.value, "target_group_index", each.key)].id : null
 
       dynamic "redirect" {
         for_each = length(keys(lookup(default_action.value, "redirect", {}))) == 0 ? [] : [lookup(default_action.value, "redirect", {})]
@@ -659,28 +673,35 @@ resource "aws_lb_listener" "frontend_http_tcp" {
   tags = merge(
     var.tags,
     var.http_tcp_listeners_tags,
-    lookup(var.http_tcp_listeners[count.index], "tags", {}),
+    lookup(each.value, "tags", {}),
   )
 }
 
+locals {
+  https_listeners = merge({
+    for index, listener in var.https_listeners:
+      index => listener
+  }, var.https_listeners_map)
+}
+
 resource "aws_lb_listener" "frontend_https" {
-  count = local.create_lb ? length(var.https_listeners) : 0
+  for_each = local.create_lb ? local.https_listeners : {}
 
   load_balancer_arn = aws_lb.this[0].arn
 
-  port            = var.https_listeners[count.index]["port"]
-  protocol        = lookup(var.https_listeners[count.index], "protocol", "HTTPS")
-  certificate_arn = var.https_listeners[count.index]["certificate_arn"]
-  ssl_policy      = lookup(var.https_listeners[count.index], "ssl_policy", var.listener_ssl_policy_default)
-  alpn_policy     = lookup(var.https_listeners[count.index], "alpn_policy", null)
+  port            = each.value["port"]
+  protocol        = lookup(each.value, "protocol", "HTTPS")
+  certificate_arn = each.value["certificate_arn"]
+  ssl_policy      = lookup(each.value, "ssl_policy", var.listener_ssl_policy_default)
+  alpn_policy     = lookup(each.value, "alpn_policy", null)
 
   dynamic "default_action" {
-    for_each = length(keys(var.https_listeners[count.index])) == 0 ? [] : [var.https_listeners[count.index]]
+    for_each = length(keys(each.value)) == 0 ? [] : [each.value]
 
     # Defaults to forward action if action_type not specified
     content {
       type             = lookup(default_action.value, "action_type", "forward")
-      target_group_arn = contains([null, "", "forward"], lookup(default_action.value, "action_type", "")) ? aws_lb_target_group.main[lookup(default_action.value, "target_group_index", count.index)].id : null
+      target_group_arn = contains([null, "", "forward"], lookup(default_action.value, "action_type", "")) ? aws_lb_target_group.main[lookup(default_action.value, "target_group_index", each.key)].id : null
 
       dynamic "redirect" {
         for_each = length(keys(lookup(default_action.value, "redirect", {}))) == 0 ? [] : [lookup(default_action.value, "redirect", {})]
@@ -744,25 +765,32 @@ resource "aws_lb_listener" "frontend_https" {
   }
 
   dynamic "default_action" {
-    for_each = contains(["authenticate-oidc", "authenticate-cognito"], lookup(var.https_listeners[count.index], "action_type", {})) ? [var.https_listeners[count.index]] : []
+    for_each = contains(["authenticate-oidc", "authenticate-cognito"], lookup(each.value, "action_type", {})) ? [each.value] : []
     content {
       type             = "forward"
-      target_group_arn = aws_lb_target_group.main[lookup(default_action.value, "target_group_index", count.index)].id
+      target_group_arn = aws_lb_target_group.main[lookup(default_action.value, "target_group_index", each.key)].id
     }
   }
 
   tags = merge(
     var.tags,
     var.https_listeners_tags,
-    lookup(var.https_listeners[count.index], "tags", {}),
+    lookup(each.value, "tags", {}),
   )
 }
 
-resource "aws_lb_listener_certificate" "https_listener" {
-  count = local.create_lb ? length(var.extra_ssl_certs) : 0
+locals {
+  extra_ssl_certs = merge({
+    for index, cert in var.extra_ssl_certs:
+      index => cert
+  }, var.extra_ssl_certs_map)
+}
 
-  listener_arn    = aws_lb_listener.frontend_https[var.extra_ssl_certs[count.index]["https_listener_index"]].arn
-  certificate_arn = var.extra_ssl_certs[count.index]["certificate_arn"]
+resource "aws_lb_listener_certificate" "https_listener" {
+  for_each = local.create_lb ? local.extra_ssl_certs : {}
+
+  listener_arn    = aws_lb_listener.frontend_https[local.extra_ssl_certs[each.key]["https_listener_index"]].arn
+  certificate_arn = local.extra_ssl_certs[each.key]["certificate_arn"]
 }
 
 ################################################################################
